@@ -250,6 +250,10 @@ class DrawingApp:
         self.root.bind("<Control-x>", self.cut_shapes)
         self.root.bind("<Control-z>", self.undo)  # Ctrl+Z for Undo
         self.root.bind("<Control-y>", self.redo)  # Ctrl+Y for Redo
+         # Create the status bar below the canvas
+        self.status_bar = ttk.Label(root, text="Welcome! Choose a tool to start.", relief=tk.SUNKEN, anchor="w")
+        self.status_bar.pack(side=tk.BOTTOM, fill=tk.X)  # Place the status bar at the bottom
+        
 
     def create_menus(self):
         menu_bar = tk.Menu(self.root)
@@ -266,33 +270,33 @@ class DrawingApp:
         color_button.pack(side=tk.LEFT)
 
         shapes = [
-            ("Line", Line), ("Rectangle", Rectangle), ("Ellipse", Ellipse),
-            ("Square", Square), ("Circle", Circle), ("Polygon", Polygon),
-            ("Freehand", Freehand)
+            ("Line", Line,"Draw a Line"), ("Rectangle", Rectangle,"Draw a Rectangle"), ("Ellipse", Ellipse,"Draw an Ellipse"),
+            ("Square", Square,"Draw a Square"), ("Circle", Circle,"Draw a Circle"), ("Polygon", Polygon,"Draw a Polygon"),
+            ("Freehand", Freehand,"Draw Freehand")
         ]
 
-        for text, shape_class in shapes:
-            button = ttk.Button(self.toolbar, text=text, command=lambda cls=shape_class: self.set_shape(cls))
+        for symbol, shape_class, description in shapes:
+            button = ttk.Button(self.toolbar, text=symbol, command=lambda cls=shape_class, msg=description: self.set_shape(cls, msg))
             button.pack(side=tk.LEFT)
-        select_button = ttk.Button(self.toolbar, text="Select/Move", command=self.set_select_mode)
+        select_button = ttk.Button(self.toolbar, text="Select/Move", command=lambda:self.set_select_mode("Select/Move Mode"))
         select_button.pack(side=tk.LEFT)
-        group_button = ttk.Button(self.toolbar, text="Group", command=self.group_shapes)
+        group_button = ttk.Button(self.toolbar, text="Group", command=lambda:self.group_shapes("Group selected shapes"))
         group_button.pack(side=tk.LEFT)
 
-        ungroup_button = ttk.Button(self.toolbar, text="Ungroup", command=self.ungroup_shapes)
+        ungroup_button = ttk.Button(self.toolbar, text="Ungroup", command=lambda:self.ungroup_shapes("Ungroup selected shapes"))
         ungroup_button.pack(side=tk.LEFT)
-        copy_button = ttk.Button(self.toolbar, text="Copy", command=self.copy_shapes)
+        copy_button = ttk.Button(self.toolbar, text="Copy", command=lambda:self.copy_shapes("Copy selected shapes"))
         copy_button.pack(side=tk.LEFT)
-        cut_button = ttk.Button(self.toolbar, text="Cut", command=self.cut_shapes)
+        cut_button = ttk.Button(self.toolbar, text="Cut", command=lambda:self.cut_shapes("Cut selected shapes"))
         cut_button.pack(side=tk.LEFT)  
-        paste_button = ttk.Button(self.toolbar, text="Paste", command=self.start_paste_mode)
+        paste_button = ttk.Button(self.toolbar, text="Paste", command=lambda:self.start_paste_mode("Paste copied shapes"))
         paste_button.pack(side=tk.LEFT)
-        delete_button = ttk.Button(self.toolbar, text="Delete", command=self.delete_shapes)
+        delete_button = ttk.Button(self.toolbar, text="Delete", command=lambda:self.delete_shapes("Delete selected shapes"))
         delete_button.pack(side=tk.LEFT)
 
-        undo_button = ttk.Button(self.toolbar, text="Undo", command=self.undo)
+        undo_button = ttk.Button(self.toolbar, text="Undo", command=lambda:self.undo("Undo last action"))
         undo_button.pack(side=tk.LEFT)
-        redo_button = ttk.Button(self.toolbar, text="Redo", command=self.redo)
+        redo_button = ttk.Button(self.toolbar, text="Redo", command=lambda:self.redo("Redo last action"))
         redo_button.pack(side=tk.LEFT)
 
     # is clicked other buttons while drawing polygon, stop it.
@@ -302,6 +306,9 @@ class DrawingApp:
             self.current_drawing_shape.draw(self.canvas)
         self.current_drawing_shape = None
 
+    def update_status_bar(self, message):
+        """Update the status bar with a given message."""
+        self.status_bar.config(text=message)
     def delete_shapes(self, event=None):
         self.save_state()
         """Delete the selected shapes or groups."""
@@ -316,10 +323,11 @@ class DrawingApp:
             self.active_shapes.clear()  # Clear the active selection after deletion
         self.redraw_all()
             
-    def set_select_mode(self):
+    def set_select_mode(self,status_message):
         self.stop_drawing_polygon()
         self.selected_shape_class = None  # Disable drawing mode
         self.current_drawing_shape = None  # Clear current drawing shape
+        self.update_status_bar(status_message)
         self.redraw_all()
 
     def choose_color(self):
@@ -327,12 +335,13 @@ class DrawingApp:
         if color:
             self.color = color
 
-    def set_shape(self, shape_class):
+    def set_shape(self, shape_class, status_message):
         self.selected_shape_class = shape_class
         # if shape_class != Polygon:
         #     self.stop_drawing_polygon()
         self.current_drawing_shape = None  # Exit Drawing Mode if new shape is selected
         self.active_shapes = []  # Clear active shapes when switching to drawing mode
+        self.update_status_bar(status_message)
         self.redraw_all()
     def mouse_move(self, event):
         if not self.selected_shape_class or not self.current_drawing_shape:
@@ -517,7 +526,7 @@ class DrawingApp:
         for shape in self.active_shapes:
             draw_highlighted_shape(shape)
 
-    def group_shapes(self):
+    def group_shapes(self,status_message):
         self.save_state()
         """Set the app to selection/move mode."""
         self.stop_drawing_polygon()
@@ -530,9 +539,10 @@ class DrawingApp:
                 self.shapes.remove(shape)  # Remove individual shapes from canvas
             self.shapes.append(group)  # Add group to canvas
             self.active_shapes = [group]  # Make the group active
+            self.update_status_bar(status_message)
             self.redraw_all()
 
-    def ungroup_shapes(self):
+    def ungroup_shapes(self,status_message):
         self.save_state()
         """Set the app to selection/move mode."""
         self.stop_drawing_polygon()
@@ -545,8 +555,9 @@ class DrawingApp:
                 self.shapes.append(shape)  # Restore individual shapes to canvas
             self.groups.remove(group)
             self.active_shapes = group.shapes  # Select individual shapes
+            self.update_status_bar(status_message)
             self.redraw_all()
-    def cut_shapes(self, event=None):
+    def cut_shapes(self, status_message, event=None):
         self.save_state()
         """Cut the selected shapes: copy them to memory and delete them from the canvas."""
         if self.active_shapes:
@@ -559,10 +570,9 @@ class DrawingApp:
                     self.groups.remove(shape)  # If it's a group, remove from the groups list
                 if shape in self.shapes:
                     self.shapes.remove(shape)  # Remove from the shapes list
-
             # Clear active selection
             self.active_shapes.clear()
-            
+            self.update_status_bar(status_message)
             # Redraw the canvas to reflect the changes
             self.redraw_all()
 
@@ -612,13 +622,14 @@ class DrawingApp:
             # Redraw canvas
             self.redraw_all()
 
-    def start_paste_mode(self):
+    def start_paste_mode(self,status_message):
         """Activate paste mode where shapes follow the mouse until placed."""
         if hasattr(self, 'copied_shapes') and self.copied_shapes:
             self.is_pasting = True
             self.paste_preview = cp.deepcopy(self.copied_shapes)  # Temporary copy for preview
             self.canvas.bind("<Motion>", self.update_paste_preview)  # Follow mouse
             self.canvas.bind("<Button-1>", self.finalize_paste)  # Place shapes on click
+            self.update_status_bar(status_message)
     def update_paste_preview(self, event):
         """Update the dotted outline position for the paste preview."""
         if self.is_pasting and self.paste_preview:
