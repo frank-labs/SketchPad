@@ -1,6 +1,6 @@
 import tkinter as tk
 from tkinter import ttk, colorchooser, filedialog
-import copy as cp
+import json
 
 
 class Shape:
@@ -69,30 +69,30 @@ class RegularShape(Shape):
         return cls(data['start_point'], data['end_point'], data['color'])
 
 
-class Polygon(IrRegularShape):    
-    def add_point(self, x, y):
-        self.points.append((x, y))
+class Polygon(IrRegularShape):
+    def __init__(self, color):
+        super().__init__(color)
+        self.drawing = True  # To track if the polygon is still being drawn
+        self.canvas_id = None
 
     def draw(self, canvas):
         if len(self.points) > 1:
-            canvas.delete("preview")  # Clear any preview
-            #polygons are just a few lines, so we can draw it directly
-            canvas.create_line(self.points, fill="black", tags="polygon", width=2)
-
-    def preview(self, canvas, x, y):
-        if len(self.points) > 0:
-            canvas.delete("preview")  # Clear any previous preview
-            preview_points = self.points + [(x, y)]
-            canvas.create_line(preview_points, fill="gray", dash=(4, 2), tags="preview")
+            if self.canvas_id is not None:
+                canvas.delete(self.canvas_id)
+            self.canvas_id = canvas.create_polygon(*self.flatten_points(), outline=self.color, fill='')
 
     def contains_point(self, x, y):
-        """Check if the point (x, y) is inside or on the boundary of the polygon."""
-        # Check if the point is on any of the polygon's edges (lines)
-        for i in range(len(self.points) - 1):
-            x1, y1 = self.points[i]
-            x2, y2 = self.points[i + 1]
-            if Line((x1, y1), (x2, y2), self.color).contains_point(x, y):
-                return True  # Point is on an edge
+        return any(abs(x - px) < 25 and abs(y - py) < 25 for px, py in self.points)
+
+    def flatten_points(self):
+        return [coord for point in self.points for coord in point]
+
+    def close_polygon(self):
+        if len(self.points) > 2:
+            self.drawing = False
+            return True
+        return False
+
 
 class Freehand(IrRegularShape):
     def draw(self, canvas):
@@ -125,7 +125,7 @@ class Rectangle(RegularShape):
                                                  self.end_point[0], self.end_point[1], outline=self.color)
 
     def contains_point(self, x, y):
-        (x1, y1), (x2, y2) = self.start_point , self.end_point
+        x1, y1, x2, y2 = self.start_point + self.end_point
         return min(x1, x2) <= x <= max(x1, x2) and min(y1, y2) <= y <= max(y1, y2)
 
 
@@ -156,3 +156,133 @@ class Circle(Ellipse):
         radius = min(abs(self.end_point[0] - self.start_point[0]), abs(self.end_point[1] - self.start_point[1])) // 2
         self.end_point = (self.start_point[0] + 2 * radius, self.start_point[1] + 2 * radius)
         super().draw(canvas)
+
+
+class DrawingApp:
+    def __init__(self, root):
+        self.root = root
+        self.root.title("Sketch Pad")
+
+        self.toolbar = ttk.Frame(root)
+        self.toolbar.pack(side=tk.TOP, fill=tk.X)
+
+        self.canvas = tk.Canvas(root, bg="white")
+        self.canvas.pack(fill=tk.BOTH, expand=True)
+
+        self.color = "black"
+        self.selected_shape_class = None  # Stores the shape class (e.g., Line, Rectangle)
+        self.current_drawing_shape = None  # Stores the current shape instance being drawn
+        self.shapes = []  # Store all shapes here for persistence
+
+        self.create_menus()
+        self.create_toolbar_buttons()
+
+        self.canvas.bind("<Button-1>", self.start_action)
+        self.canvas.bind("<B1-Motion>", self.perform_action)
+        self.canvas.bind("<ButtonRelease-1>", self.end_action)
+        self.canvas.bind("<Button-3>", self.finish_polygon)
+
+    def create_menus(self):
+        menu_bar = tk.Menu(self.root)
+        self.root.config(menu=menu_bar)
+
+        file_menu = tk.Menu(menu_bar, tearoff=0)
+        menu_bar.add_cascade(label="File", menu=file_menu)
+
+        file_menu.add_command(label="Save", command=self.save)
+        file_menu.add_command(label="Load", command=self.load)
+
+    def create_toolbar_buttons(self):
+        color_button = ttk.Button(self.toolbar, text="Color", command=self.choose_color)
+        color_button.pack(side=tk.LEFT)
+
+        shapes = [
+            ("Line", Line), ("Rectangle", Rectangle), ("Ellipse", Ellipse),
+            ("Square", Square), ("Circle", Circle), ("Polygon", Polygon),
+            ("Freehand", Freehand)
+        ]
+
+        for text, shape_class in shapes:
+            button = ttk.Button(self.toolbar, text=text, command=lambda cls=shape_class: self.set_shape(cls))
+            button.pack(side=tk.LEFT)
+
+    def choose_color(self):
+        color = colorchooser.askcolor()[1]
+        if color:
+            self.color = color
+
+    def set_shape(self, shape_class):
+        self.selected_shape_class = shape_class
+
+    def start_action(self, event):
+        if self.selected_shape_class is None:
+            return
+
+        if issubclass(self.selected_shape_class, IrRegularShape):
+            if self.current_drawing_shape is None:
+                self.current_drawing_shape = self.selected_shape_class(color=self.color)
+                self.shapes.append(self.current_drawing_shape)
+            self.current_drawing_shape.points.append((event.x, event.y))
+            self.redraw_all()
+        elif issubclass(self.selected_shape_class, RegularShape):
+            self.current_drawing_shape = self.selected_shape_class(
+                start_point=(event.x, event.y),
+                end_point=(event.x, event.y),
+                color=self.color
+            )
+            self.shapes.append(self.current_drawing_shape)
+
+    def perform_action(self, event):
+        if self.current_drawing_shape is None:
+            return
+
+        if isinstance(self.current_drawing_shape, RegularShape):
+            self.current_drawing_shape.end_point = (event.x, event.y)
+            self.redraw_all()
+        elif isinstance(self.current_drawing_shape, Freehand):
+            self.current_drawing_shape.points.append((event.x, event.y))
+            self.redraw_all()
+
+    def finish_polygon(self, event):
+        if isinstance(self.current_drawing_shape, Polygon):
+            if self.current_drawing_shape and self.current_drawing_shape.close_polygon():
+                self.current_drawing_shape.draw(self.canvas)
+                self.current_drawing_shape = None
+
+    def end_action(self, event):
+        if self.current_drawing_shape is None:
+            return
+
+        if isinstance(self.current_drawing_shape, Freehand):
+            self.current_drawing_shape.points.append((event.x, event.y))
+            self.current_drawing_shape.draw(self.canvas)
+            self.current_drawing_shape = None
+        elif isinstance(self.current_drawing_shape, RegularShape):
+            self.current_drawing_shape.end_point = (event.x, event.y)
+            self.current_drawing_shape.draw(self.canvas)
+            self.current_drawing_shape = None
+
+    def redraw_all(self):
+        self.canvas.delete("all")
+        for shape in self.shapes:
+            shape.draw(self.canvas)
+
+    def save(self):
+        file_path = filedialog.asksaveasfilename(defaultextension=".json")
+        if file_path:
+            with open(file_path, "w") as file:
+                json.dump([shape.to_dict() for shape in self.shapes], file)
+
+    def load(self):
+        file_path = filedialog.askopenfilename(defaultextension=".json")
+        if file_path:
+            with open(file_path, "r") as file:
+                data = json.load(file)
+                self.shapes = [Shape.from_dict(shape_data) for shape_data in data]
+                self.redraw_all()
+
+
+if __name__ == "__main__":
+    root = tk.Tk()
+    app = DrawingApp(root)
+    root.mainloop()
