@@ -6,6 +6,9 @@ on:
       - main
   workflow_dispatch: # Allow manual trigger
 
+permissions:
+  contents: write  # Grant write access to create releases
+
 jobs:
   build:
     runs-on: windows-latest
@@ -17,7 +20,7 @@ jobs:
     - name: Set up Python
       uses: actions/setup-python@v4
       with:
-        python-version: 3.12  # Use your desired Python version
+        python-version: 3.12
 
     - name: Install dependencies
       run: |
@@ -26,13 +29,6 @@ jobs:
     - name: Build executable
       run: |
         pyinstaller --onefile --noconsole SketchPad.py
-      # The resulting .exe will be in the `dist` folder.
-
-    - name: Archive executable
-      uses: actions/upload-artifact@v3
-      with:
-        name: executable
-        path: dist/SketchPad.exe
 
     - name: Publish release
       uses: ncipollo/release-action@v1
@@ -46,4 +42,3 @@ jobs:
           - Branch: ${{ github.ref_name }}
           - Built by GitHub Actions.
         prerelease: true  # Optional: mark as a pre-release
-
