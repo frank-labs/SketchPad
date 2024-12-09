@@ -1,6 +1,7 @@
-import tkinter as tk,json, math
+import tkinter as tk
 from tkinter import ttk, colorchooser, filedialog
 import copy as cp
+import json, math
 
 
 class Shape:
