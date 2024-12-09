@@ -29,16 +29,24 @@ jobs:
     - name: Build executable
       run: |
         pyinstaller --onefile --noconsole SketchPad.py
+        
+    - name: Create a Tag
+      run: |
+        git config --global user.name "github-actions[bot]"
+        git config --global user.email "github-actions[bot]@users.noreply.github.com"
+        git tag -a v${{ github.run_number }} -m "Automated build tag"
+        git push origin v${{ github.run_number }}
 
     - name: Publish release
       uses: ncipollo/release-action@v1
       with:
-        tag: "${{ github.sha }}"  # Use the commit SHA as the tag
+        tag: "v${{ github.run_number }}"  # Use the dynamically created tag
         artifacts: "dist/SketchPad.exe"
         token: ${{ secrets.GITHUB_TOKEN }}
-        name: "Release for commit ${{ github.sha }}"
+        name: "Release for build ${{ github.run_number }}"
         body: |
           Build for commit: ${{ github.sha }}
           - Branch: ${{ github.ref_name }}
           - Built by GitHub Actions.
-        prerelease: true  # Optional: mark as a pre-release
+        prerelease: true
+
