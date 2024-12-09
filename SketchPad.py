@@ -157,7 +157,7 @@ class Circle(Ellipse):
         self.end_point = (self.start_point[0] + 2 * radius, self.start_point[1] + 2 * radius)
         super().draw(canvas)
 
-class PersistentGroup(Shape):
+class Group(Shape):
     def __init__(self, shapes):
         super().__init__(color=None)  # Groups don't have a single color
         self.shapes = shapes  # List of shapes in the group
@@ -204,6 +204,10 @@ class DrawingApp:
         self.active_shapes = []  # List of selected shapes (can include multiple shapes)
         self.groups = []  # List of persistent groups
 
+        self.THRESHOLD = 5  # Minimum movement in pixels to detect a drag
+        self.is_dragging = False  # Tracks whether the user is dragging shapes
+        self.clicked_shape = None
+
         self.create_menus()
         self.create_toolbar_buttons()
 
@@ -211,7 +215,7 @@ class DrawingApp:
         self.canvas.bind("<B1-Motion>", self.perform_action)
         self.canvas.bind("<ButtonRelease-1>", self.end_action)
         self.canvas.bind("<Button-3>", self.finish_polygon)
-
+        self.root.bind("<Delete>", self.delete_shapes)  # Bind the "Delete" key to delete shapes
     def create_menus(self):
         menu_bar = tk.Menu(self.root)
         self.root.config(menu=menu_bar)
@@ -221,6 +225,10 @@ class DrawingApp:
 
         file_menu.add_command(label="Save", command=self.save)
         file_menu.add_command(label="Load", command=self.load)
+
+    def log_active_shapes(self,action):
+        """Log the active_shapes list for debugging."""
+        print(f"{action}: {[type(shape).__name__ for shape in self.active_shapes]}")
 
     def create_toolbar_buttons(self):
         color_button = ttk.Button(self.toolbar, text="Color", command=self.choose_color)
@@ -242,7 +250,21 @@ class DrawingApp:
 
         ungroup_button = ttk.Button(self.toolbar, text="Ungroup", command=self.ungroup_shapes)
         ungroup_button.pack(side=tk.LEFT)
+        delete_button = ttk.Button(self.toolbar, text="Delete", command=self.delete_shapes)
+        delete_button.pack(side=tk.LEFT)
 
+    def delete_shapes(self, event=None):
+        """Delete the selected shapes or groups."""
+        if self.active_shapes:
+            for shape in self.active_shapes:
+                if isinstance(shape, Group):  # If it's a group, remove all shapes in it
+                    self.groups.remove(shape)
+                    self.shapes.remove(shape)
+                else:
+                    self.shapes.remove(shape)
+            self.active_shapes.clear()  # Clear the active selection after deletion
+        self.redraw_all()
+            
     def set_select_mode(self):
         self.selected_shape_class = None  # Disable drawing mode
         self.current_drawing_shape = None  # Clear current drawing shape
@@ -261,29 +283,35 @@ class DrawingApp:
         
     def start_action(self, event):
         ctrl_pressed = event.state & 0x4  # Check if Ctrl is pressed
-        
+
         if self.selected_shape_class is None:  # Selection/Move Mode
-            clicked_shape = None
+            
             for shape in reversed(self.shapes):  # Check for shape under click
                 if shape.contains_point(event.x, event.y):
-                    clicked_shape = shape
+                    self.clicked_shape = shape
                     break
-            
-            if ctrl_pressed:  # Multiple selection
-                if clicked_shape:
-                    if clicked_shape in self.active_shapes:  # Toggle selection
-                        self.active_shapes.remove(clicked_shape)
-                    else:
-                        self.active_shapes.append(clicked_shape)
-                self.redraw_all()
-            else:  # Single selection
-                self.active_shapes = [clicked_shape] if clicked_shape else []
 
+            if ctrl_pressed:  # Multiple selection
+                if self.clicked_shape:
+                    #here only append inactive shape, not remove active one until we know it is a click, first q
+                    self.drag_start = (event.x, event.y)
                 self.redraw_all()
-            
-            # Start dragging if a shape is clicked
-            if clicked_shape:
-                self.drag_start = (event.x, event.y)
+            # no ctrl mode, can deselect all, or  select single(if click) , or move multiple(if drag), we know when step 2
+            else:  # Single selection or drag, we dont know 
+                if self.clicked_shape:
+                    if self.clicked_shape not in self.active_shapes:
+                        self.log_active_shapes("2before clicked_shape not in self.active_shapes")
+                        self.active_shapes = [self.clicked_shape]  # Make only the clicked shape active
+                        self.log_active_shapes("2after clicked_shape not in self.active_shapes")
+                    # else click shape is one of the active shapes, might move multiple/ might select single, see on step 2
+                    self.drag_start = (event.x, event.y)
+                # click blanck space
+                else:
+                    self.log_active_shapes("3before clear")
+                    self.active_shapes = []  # Deselect all if clicking empty space
+                    self.log_active_shapes("3after clear")
+                self.redraw_all()
+            self.is_dragging = False  # Reset dragging flag
         else:  # Drawing Mode
             if issubclass(self.selected_shape_class, IrRegularShape):
                 if self.current_drawing_shape is None:
@@ -300,14 +328,37 @@ class DrawingApp:
                 self.shapes.append(self.current_drawing_shape)
 
     def perform_action(self, event):
+        ctrl_pressed = event.state & 0x4  # Check if Ctrl is pressed
         if self.active_shapes and self.selected_shape_class is None:  # Move selected shapes
+            #drag_start meant clicked on shape, so no need to re-check if self.clicked_shape
             if self.drag_start:
                 dx = event.x - self.drag_start[0]
                 dy = event.y - self.drag_start[1]
-                for shape in self.active_shapes:
-                    shape.move(dx, dy)  
-                self.drag_start = (event.x, event.y)  # Update drag start
-                self.redraw_all()
+                # is drag, not click, so we move shapes
+                if abs(dx) > self.THRESHOLD or abs(dy) > self.THRESHOLD:  # Check if movement exceeds the threshold
+                    print("it's a drag")
+                    self.is_dragging = True  # Set dragging flag
+                    if not ctrl_pressed:  # If Ctrl is not pressed, if we move a inactive shape, we move it single, but if we move a active shape, we move multiple
+                        if self.clicked_shape not in self.active_shapes:
+                            self.log_active_shapes("4 before click another inactive shape")
+                            self.active_shapes = [self.clicked_shape]
+                            self.log_active_shapes("4 after click another inactive shape")
+                        #else, we move multiple shapes
+                    else:  # If Ctrl is pressed, and the click shape not active, we make it active
+                        if self.clicked_shape not in self.active_shapes:
+                            self.log_active_shapes("7 before ctrl add shape")
+                            self.active_shapes.append(self.clicked_shape)
+                            self.log_active_shapes("7 after ctrl add  shape")
+                    for shape in self.active_shapes:
+                        shape.move(dx, dy)
+                    self.drag_start = (event.x, event.y)  # Update drag start
+                    self.redraw_all()
+                #drag continue
+                elif self.is_dragging:
+                    for shape in self.active_shapes:
+                        shape.move(dx, dy)
+                    self.drag_start = (event.x, event.y)  # Update drag start
+                    self.redraw_all()
         elif self.current_drawing_shape:  # Drawing Mode
             if isinstance(self.current_drawing_shape, RegularShape):
                 self.current_drawing_shape.end_point = (event.x, event.y)
@@ -316,6 +367,7 @@ class DrawingApp:
                 self.current_drawing_shape.points.append((event.x, event.y))
                 self.redraw_all()
 
+
     def finish_polygon(self, event):
         if isinstance(self.current_drawing_shape, Polygon):
             if self.current_drawing_shape and self.current_drawing_shape.close_polygon():
@@ -323,9 +375,29 @@ class DrawingApp:
                 self.current_drawing_shape = None
 
     def end_action(self, event):
-        if not self.active_shapes:  # Clicked on empty space
-            self.redraw_all()
-        if self.current_drawing_shape:
+        ctrl_pressed = event.state & 0x4  # Check if Ctrl is pressed
+        if self.is_dragging:
+            print(f"Drag ended at ({event.x}, {event.y})")
+        if self.selected_shape_class is None and not self.is_dragging:  # Move/select mode. and If it's a click, not a drag
+            if ctrl_pressed:                 
+                if self.clicked_shape:
+                    if self.clicked_shape not in self.active_shapes: 
+                        self.log_active_shapes("1before append")
+                        self.active_shapes.append(self.clicked_shape)
+                        self.log_active_shapes("1after append")
+                    elif self.clicked_shape in self.active_shapes:  
+                        self.log_active_shapes("5 before remove active shape")
+                        self.active_shapes.remove(self.clicked_shape)
+                        self.log_active_shapes("5 after remove active shape")
+                self.redraw_all()
+            # no control mode, single click, only select the clicked shape
+            else:
+                if self.clicked_shape:
+                    self.log_active_shapes("6 no crtl mode before click another inactive shape")
+                    self.active_shapes = [self.clicked_shape]  # Make only the clicked shape active
+                    self.log_active_shapes("6 no crtl mode after click another inactive shape")
+                self.redraw_all()
+        elif self.current_drawing_shape:  # Finalize drawing shapes
             if isinstance(self.current_drawing_shape, Freehand):
                 self.current_drawing_shape.points.append((event.x, event.y))
                 self.current_drawing_shape.draw(self.canvas)
@@ -334,6 +406,8 @@ class DrawingApp:
                 self.current_drawing_shape.end_point = (event.x, event.y)
                 self.current_drawing_shape.draw(self.canvas)
                 self.current_drawing_shape = None
+        self.clicked_shape = None  # Reset clicked shape
+        self.is_dragging=False
 
     def redraw_all(self):
         # Clear the canvas
@@ -356,7 +430,7 @@ class DrawingApp:
                     x1, y1, x2, y2,
                     outline="red", dash=(5, 2), width=2
                 )
-            elif isinstance(shape, PersistentGroup):
+            elif isinstance(shape, Group):
                 # Recursively highlight all shapes within the group
                 for sub_shape in shape.shapes:
                     draw_highlighted_shape(sub_shape)
@@ -369,32 +443,34 @@ class DrawingApp:
         for shape in self.active_shapes:
             draw_highlighted_shape(shape)
 
-
-
     def group_shapes(self):
         """Set the app to selection/move mode."""
         self.selected_shape_class = None  # Disable drawing mode
         self.current_drawing_shape = None  # Clear current drawing shape
         if len(self.active_shapes) > 1:  # Can only group multiple shapes
-            group = PersistentGroup(self.active_shapes)
+            group = Group(self.active_shapes)
             self.groups.append(group)
             for shape in self.active_shapes:
                 self.shapes.remove(shape)  # Remove individual shapes from canvas
             self.shapes.append(group)  # Add group to canvas
+            self.log_active_shapes("8 before group")
             self.active_shapes = [group]  # Make the group active
+            self.log_active_shapes("8 after group")
             self.redraw_all()
 
     def ungroup_shapes(self):
         """Set the app to selection/move mode."""
         self.selected_shape_class = None  # Disable drawing mode
         self.current_drawing_shape = None  # Clear current drawing shape
-        if len(self.active_shapes) == 1 and isinstance(self.active_shapes[0], PersistentGroup):
+        if len(self.active_shapes) == 1 and isinstance(self.active_shapes[0], Group):
             group = self.active_shapes[0]
             self.shapes.remove(group)
             for shape in group.shapes:
                 self.shapes.append(shape)  # Restore individual shapes to canvas
             self.groups.remove(group)
+            self.log_active_shapes("9 before ungroup")
             self.active_shapes = group.shapes  # Select individual shapes
+            self.log_active_shapes("9 after ungroup")
             self.redraw_all()
 
     def save(self):
