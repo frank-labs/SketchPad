@@ -237,6 +237,7 @@ class DrawingApp:
         self.create_toolbar_buttons()
 
         self.canvas.bind("<Button-1>", self.start_action)
+        self.canvas.bind("<Motion>", self.mouse_move)    # Mouse movement for preview
         self.canvas.bind("<B1-Motion>", self.perform_action)
         self.canvas.bind("<ButtonRelease-1>", self.end_action)
         self.canvas.bind("<Button-3>", self.finish_polygon)
@@ -311,12 +312,17 @@ class DrawingApp:
 
     def set_shape(self, shape_class):
         self.selected_shape_class = shape_class
-        if shape_class != Polygon:
-            self.stop_drawing_polygon()
+        # if shape_class != Polygon:
+        #     self.stop_drawing_polygon()
         self.current_drawing_shape = None  # Exit Drawing Mode if new shape is selected
         self.active_shapes = []  # Clear active shapes when switching to drawing mode
         self.redraw_all()
-        
+    def mouse_move(self, event):
+        if not self.selected_shape_class or not self.current_drawing_shape:
+            return
+
+        x, y = event.x, event.y
+        self.current_drawing_shape.preview(self.canvas, x, y)
     def start_action(self, event):
         ctrl_pressed = event.state & 0x4  # Check if Ctrl is pressed
 
@@ -422,11 +428,7 @@ class DrawingApp:
                     self.drag_start = (event.x, event.y)  # Update drag start
                     self.redraw_all()
         elif self.current_drawing_shape:  # Drawing Mode
-            if isinstance(self.current_drawing_shape, Polygon):
-                x, y = event.x, event.y
-                self.canvas.delete("preview") 
-                self.current_drawing_shape.preview(self.canvas, x, y)
-            elif isinstance(self.current_drawing_shape, RegularShape):
+            if isinstance(self.current_drawing_shape, RegularShape):
                 self.current_drawing_shape.end_point = (event.x, event.y)
                 self.redraw_all()
             elif isinstance(self.current_drawing_shape, Freehand):
