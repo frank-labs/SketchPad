@@ -229,6 +229,8 @@ class DrawingApp:
         self.drag_start = None
         self.active_shapes = []  # List of selected shapes (can include multiple shapes)
         self.groups = []  # List of persistent groups
+        self.undo_stack = []
+        self.redo_stack = []
 
         self.is_dragging = False  # Tracks whether the user is dragging shapes
         self.clicked_shape = None
@@ -244,6 +246,9 @@ class DrawingApp:
         self.root.bind("<Delete>", self.delete_shapes)  # Bind the "Delete" key to delete shapes
         self.root.bind("<Control-c>", self.copy_shapes)
         self.root.bind("<Control-v>", self.paste_shapes)
+        self.root.bind("<Control-x>", self.cut_shapes)
+        self.root.bind("<Control-z>", self.undo)  # Ctrl+Z for Undo
+        self.root.bind("<Control-y>", self.redo)  # Ctrl+Y for Redo
 
     def create_menus(self):
         menu_bar = tk.Menu(self.root)
@@ -279,6 +284,12 @@ class DrawingApp:
 
         ungroup_button = ttk.Button(self.toolbar, text="Ungroup", command=self.ungroup_shapes)
         ungroup_button.pack(side=tk.LEFT)
+        copy_button = ttk.Button(self.toolbar, text="Copy", command=self.copy_shapes)
+        copy_button.pack(side=tk.LEFT)
+        cut_button = ttk.Button(self.toolbar, text="Cut", command=self.cut_shapes)
+        cut_button.pack(side=tk.LEFT)  
+        paste_button = ttk.Button(self.toolbar, text="Paste", command=self.start_paste_mode)
+        paste_button.pack(side=tk.LEFT)
         delete_button = ttk.Button(self.toolbar, text="Delete", command=self.delete_shapes)
         delete_button.pack(side=tk.LEFT)
 
@@ -290,6 +301,7 @@ class DrawingApp:
         self.current_drawing_shape = None
 
     def delete_shapes(self, event=None):
+        self.save_state()
         """Delete the selected shapes or groups."""
         self.stop_drawing_polygon()
         if self.active_shapes:
@@ -327,6 +339,7 @@ class DrawingApp:
         x, y = event.x, event.y
         self.current_drawing_shape.preview(self.canvas, x, y)
     def start_action(self, event):
+        self.save_state()
         ctrl_pressed = event.state & 0x4  # Check if Ctrl is pressed
 
         if self.selected_shape_class is None:  # Selection/Move Mode
@@ -520,6 +533,7 @@ class DrawingApp:
             draw_highlighted_shape(shape)
 
     def group_shapes(self):
+        self.save_state()
         """Set the app to selection/move mode."""
         self.stop_drawing_polygon()
         self.selected_shape_class = None  # Disable drawing mode
@@ -536,6 +550,7 @@ class DrawingApp:
             self.redraw_all()
 
     def ungroup_shapes(self):
+        self.save_state()
         """Set the app to selection/move mode."""
         self.stop_drawing_polygon()
         self.selected_shape_class = None  # Disable drawing mode
@@ -550,6 +565,26 @@ class DrawingApp:
             self.active_shapes = group.shapes  # Select individual shapes
             self.log_active_shapes("9 after ungroup")
             self.redraw_all()
+    def cut_shapes(self, event=None):
+        self.save_state()
+        """Cut the selected shapes: copy them to memory and delete them from the canvas."""
+        if self.active_shapes:
+            # Copy shapes to memory
+            self.copied_shapes = cp.deepcopy(self.active_shapes)
+            print(f"Cut {len(self.copied_shapes)} shape(s) to memory")
+            
+            # Remove the shapes from the canvas
+            for shape in self.active_shapes:
+                if isinstance(shape, Group) and shape in self.groups:
+                    self.groups.remove(shape)  # If it's a group, remove from the groups list
+                if shape in self.shapes:
+                    self.shapes.remove(shape)  # Remove from the shapes list
+
+            # Clear active selection
+            self.active_shapes.clear()
+            
+            # Redraw the canvas to reflect the changes
+            self.redraw_all()
 
     def copy_shapes(self, event=None):
         """Copy the selected shapes."""
@@ -557,7 +592,9 @@ class DrawingApp:
             self.copied_shapes = cp.deepcopy(self.active_shapes)  # Deep copy to avoid changes to original shapes
             print(f"Copied {len(self.copied_shapes)} shape(s)")
 
+        
     def paste_shapes(self, event=None):
+        self.save_state()
         """Paste the copied shapes at the mouse location."""
         if hasattr(self, 'copied_shapes') and self.copied_shapes:
             # Find the reference point (top-left corner of the copied shapes)
@@ -597,7 +634,96 @@ class DrawingApp:
             # Redraw canvas
             self.redraw_all()
             print(f"Pasted {len(new_shapes)} shape(s) at ({mouse_x}, {mouse_y})")
+    def start_paste_mode(self):
+        """Activate paste mode where shapes follow the mouse until placed."""
+        if hasattr(self, 'copied_shapes') and self.copied_shapes:
+            self.is_pasting = True
+            self.paste_preview = cp.deepcopy(self.copied_shapes)  # Temporary copy for preview
+            self.canvas.bind("<Motion>", self.update_paste_preview)  # Follow mouse
+            self.canvas.bind("<Button-1>", self.finalize_paste)  # Place shapes on click
+            print("Paste mode activated")
+    def update_paste_preview(self, event):
+        """Update the dotted outline position for the paste preview."""
+        if self.is_pasting and self.paste_preview:
+            # Calculate the offset for preview
+            min_x, min_y = float('inf'), float('inf')
 
+            def get_min_coords(shape):
+                """Recursively calculate the minimum x and y coordinates for a shape or group."""
+                nonlocal min_x, min_y
+                if isinstance(shape, IrRegularShape):
+                    for x, y in shape.points:
+                        min_x = min(min_x, x)
+                        min_y = min(min_y, y)
+                elif isinstance(shape, RegularShape):
+                    min_x = min(min_x, shape.start_point[0], shape.end_point[0])
+                    min_y = min(min_y, shape.start_point[1], shape.end_point[1])
+                elif isinstance(shape, Group):
+                    for sub_shape in shape.shapes:
+                        get_min_coords(sub_shape)
+
+            # Calculate reference point
+            for shape in self.paste_preview:
+                get_min_coords(shape)
+
+            dx, dy = event.x - min_x, event.y - min_y
+
+            # Move preview shapes
+            for shape in self.paste_preview:
+                shape.move(dx, dy)
+
+            # Redraw canvas with preview
+            self.redraw_all()
+            self.draw_dotted_outline(self.paste_preview)  # Draw dotted preview
+    def finalize_paste(self, event):
+        self.save_state()
+        """Finalize the paste operation by placing the shapes on the canvas."""
+        if self.is_pasting and self.paste_preview:
+            # Add the preview shapes to the main shapes list
+            self.shapes.extend(self.paste_preview)
+            self.paste_preview = None  # Clear the preview
+            self.is_pasting = False  # Exit paste mode
+            self.canvas.unbind("<Motion>")
+            self.canvas.unbind("<Button-1>")
+            self.redraw_all()
+            print("Shapes pasted")
+    def draw_dotted_outline(self, shapes):
+        """Draw shapes with a dotted outline for preview."""
+        for shape in shapes:
+            if isinstance(shape, IrRegularShape):
+                self.canvas.create_line(
+                    *shape.flatten_points(),
+                    fill="gray", dash=(4, 2), tags="preview"
+                )
+            elif isinstance(shape, RegularShape):
+                x1, y1 = shape.start_point
+                x2, y2 = shape.end_point
+                self.canvas.create_rectangle(
+                    x1, y1, x2, y2,
+                    outline="gray", dash=(4, 2), tags="preview"
+                )
+            elif isinstance(shape, Group):
+                for sub_shape in shape.shapes:
+                    self.draw_dotted_outline([sub_shape])
+
+    def save_state(self):
+        """Save the current state of shapes to the undo stack."""
+        self.undo_stack.append(cp.deepcopy(self.shapes))
+        self.redo_stack.clear()  # Clear redo stack on a new action
+    def undo(self, event=None):
+        """Undo the last action."""
+        if self.undo_stack:
+            self.redo_stack.append(cp.deepcopy(self.shapes))  # Save current state to redo stack
+            self.shapes = self.undo_stack.pop()  # Restore the previous state
+            self.redraw_all()
+            print("Undo performed")
+    def redo(self, event=None):
+        """Redo the last undone action."""
+        if self.redo_stack:
+            self.undo_stack.append(cp.deepcopy(self.shapes))  # Save current state to undo stack
+            self.shapes = self.redo_stack.pop()  # Restore the state from redo stack
+            self.redraw_all()
+            print("Redo performed")
 
     def save(self):
         file_path = filedialog.asksaveasfilename(defaultextension=".json")
