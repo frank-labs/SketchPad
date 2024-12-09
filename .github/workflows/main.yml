@@ -1,0 +1,48 @@
+name: Build and Publish Executable
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch: # Allow manual trigger
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v3
+
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: 3.12  # Use your desired Python version
+
+    - name: Install dependencies
+      run: |
+        pip install pyinstaller
+        if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
+
+    - name: Build executable
+      run: |
+        pyinstaller --onefile --noconsole SketchPad.py
+      # The resulting .exe will be in the `dist` folder.
+
+    - name: Archive executable
+      uses: actions/upload-artifact@v3
+      with:
+        name: executable
+        path: dist/SketchPad.exe
+
+    - name: Publish release
+      uses: ncipollo/release-action@v1
+      with:
+        artifacts: "dist/SketchPad.exe"
+        token: ${{ secrets.GITHUB_TOKEN }}
+        name: "Release for commit ${{ github.sha }}"
+        body: |
+          Build for commit: ${{ github.sha }}
+          - Branch: ${{ github.ref_name }}
+          - Built by GitHub Actions.
+        prerelease: true  # Optional: mark as a pre-release
