@@ -157,6 +157,32 @@ class Circle(Ellipse):
         self.end_point = (self.start_point[0] + 2 * radius, self.start_point[1] + 2 * radius)
         super().draw(canvas)
 
+class PersistentGroup(Shape):
+    def __init__(self, shapes):
+        super().__init__(color=None)  # Groups don't have a single color
+        self.shapes = shapes  # List of shapes in the group
+    
+    def draw(self, canvas):
+        for shape in self.shapes:
+            shape.draw(canvas)
+    
+    def contains_point(self, x, y):
+        return any(shape.contains_point(x, y) for shape in self.shapes)
+    
+    def move(self, dx, dy):
+        for shape in self.shapes:
+            shape.move(dx, dy)
+    
+    def to_dict(self):
+        data = super().to_dict()
+        data['shapes'] = [shape.to_dict() for shape in self.shapes]
+        return data
+    
+    @classmethod
+    def from_dict(cls, data):
+        shapes = [Shape.from_dict(shape_data) for shape_data in data['shapes']]
+        return cls(shapes)
+
 
 class DrawingApp:
     def __init__(self, root):
@@ -173,10 +199,10 @@ class DrawingApp:
         self.selected_shape_class = None  # Stores the shape class (e.g., Line, Rectangle)
         self.current_drawing_shape = None  # Stores the current shape instance being drawn
         self.shapes = []  # Store all shapes here for persistence
-        self.active_shape = None  # Holds the currently selected shape
+        # self.active_shape = None  # Holds the currently selected shape
         self.drag_start = None
-
-
+        self.active_shapes = []  # List of selected shapes (can include multiple shapes)
+        self.groups = []  # List of persistent groups
 
         self.create_menus()
         self.create_toolbar_buttons()
@@ -211,9 +237,16 @@ class DrawingApp:
             button.pack(side=tk.LEFT)
         select_button = ttk.Button(self.toolbar, text="Select/Move", command=self.set_select_mode)
         select_button.pack(side=tk.LEFT)
+        group_button = ttk.Button(self.toolbar, text="Group", command=self.group_shapes)
+        group_button.pack(side=tk.LEFT)
+
+        ungroup_button = ttk.Button(self.toolbar, text="Ungroup", command=self.ungroup_shapes)
+        ungroup_button.pack(side=tk.LEFT)
 
     def set_select_mode(self):
         self.selected_shape_class = None  # Disable drawing mode
+        self.current_drawing_shape = None  # Clear current drawing shape
+        self.redraw_all()
 
     def choose_color(self):
         color = colorchooser.askcolor()[1]
@@ -222,17 +255,35 @@ class DrawingApp:
 
     def set_shape(self, shape_class):
         self.selected_shape_class = shape_class
-
+        self.current_drawing_shape = None  # Exit Drawing Mode if new shape is selected
+        self.active_shapes = []  # Clear active shapes when switching to drawing mode
+        self.redraw_all()
+        
     def start_action(self, event):
+        ctrl_pressed = event.state & 0x4  # Check if Ctrl is pressed
+        
         if self.selected_shape_class is None:  # Selection/Move Mode
-            for shape in reversed(self.shapes):  # Iterate in reverse to prioritize topmost shapes
+            clicked_shape = None
+            for shape in reversed(self.shapes):  # Check for shape under click
                 if shape.contains_point(event.x, event.y):
-                    self.active_shape = shape
-                    self.drag_start = (event.x, event.y)  # Store initial drag position
-                    self.redraw_all()
-                    return
-            self.active_shape = None  # Clicked on empty space, deselect
-            self.redraw_all()
+                    clicked_shape = shape
+                    break
+            
+            if ctrl_pressed:  # Multiple selection
+                if clicked_shape:
+                    if clicked_shape in self.active_shapes:  # Toggle selection
+                        self.active_shapes.remove(clicked_shape)
+                    else:
+                        self.active_shapes.append(clicked_shape)
+                self.redraw_all()
+            else:  # Single selection
+                self.active_shapes = [clicked_shape] if clicked_shape else []
+
+                self.redraw_all()
+            
+            # Start dragging if a shape is clicked
+            if clicked_shape:
+                self.drag_start = (event.x, event.y)
         else:  # Drawing Mode
             if issubclass(self.selected_shape_class, IrRegularShape):
                 if self.current_drawing_shape is None:
@@ -249,12 +300,13 @@ class DrawingApp:
                 self.shapes.append(self.current_drawing_shape)
 
     def perform_action(self, event):
-        if self.active_shape and self.selected_shape_class is None:  # Move active shape
-            if self.drag_start:  # Ensure drag_start is set
-                dx = event.x - self.drag_start[0]  # Compute movement in x
-                dy = event.y - self.drag_start[1]  # Compute movement in y
-                self.active_shape.move(dx, dy)  # Move the shape
-                self.drag_start = (event.x, event.y)  # Update drag start to current position
+        if self.active_shapes and self.selected_shape_class is None:  # Move selected shapes
+            if self.drag_start:
+                dx = event.x - self.drag_start[0]
+                dy = event.y - self.drag_start[1]
+                for shape in self.active_shapes:
+                    shape.move(dx, dy)  
+                self.drag_start = (event.x, event.y)  # Update drag start
                 self.redraw_all()
         elif self.current_drawing_shape:  # Drawing Mode
             if isinstance(self.current_drawing_shape, RegularShape):
@@ -271,9 +323,8 @@ class DrawingApp:
                 self.current_drawing_shape = None
 
     def end_action(self, event):
-        if self.active_shape and self.selected_shape_class is None:
-            self.drag_start = None  # Reset drag start
-            return
+        if not self.active_shapes:  # Clicked on empty space
+            self.redraw_all()
         if self.current_drawing_shape:
             if isinstance(self.current_drawing_shape, Freehand):
                 self.current_drawing_shape.points.append((event.x, event.y))
@@ -284,26 +335,67 @@ class DrawingApp:
                 self.current_drawing_shape.draw(self.canvas)
                 self.current_drawing_shape = None
 
-
-
     def redraw_all(self):
+        # Clear the canvas
         self.canvas.delete("all")
+
+        # Function to highlight shapes (including nested groups)
+        def draw_highlighted_shape(shape):
+            if isinstance(shape, IrRegularShape):
+                # Highlight IrRegularShapes with a dashed outline
+                self.canvas.create_polygon(
+                    *shape.flatten_points(),
+                    outline="red", dash=(5, 2), width=2,
+                    fill=""  # Ensure no fill to only show outline
+                )
+            elif isinstance(shape, RegularShape):
+                # Highlight RegularShapes with a dashed rectangle
+                x1, y1 = shape.start_point
+                x2, y2 = shape.end_point
+                self.canvas.create_rectangle(
+                    x1, y1, x2, y2,
+                    outline="red", dash=(5, 2), width=2
+                )
+            elif isinstance(shape, PersistentGroup):
+                # Recursively highlight all shapes within the group
+                for sub_shape in shape.shapes:
+                    draw_highlighted_shape(sub_shape)
+
+        # Draw all shapes normally
         for shape in self.shapes:
             shape.draw(self.canvas)
-        if self.active_shape:
-            # Highlight active shape (e.g., with a dashed outline)
-            if isinstance(self.active_shape, RegularShape):
-                self.canvas.create_rectangle(
-                    self.active_shape.start_point[0], self.active_shape.start_point[1],
-                    self.active_shape.end_point[0], self.active_shape.end_point[1],
-                    outline="blue", dash=(4, 2)  # Dashed blue outline for active shape
-                )
-            elif isinstance(self.active_shape, IrRegularShape):
-                self.canvas.create_polygon(
-                    *self.active_shape.flatten_points(),
-                    outline="blue", dash=(4, 2), fill=''  # Dashed blue outline
-                )
 
+        # Highlight active shapes (can be in a group or not)
+        for shape in self.active_shapes:
+            draw_highlighted_shape(shape)
+
+
+
+    def group_shapes(self):
+        """Set the app to selection/move mode."""
+        self.selected_shape_class = None  # Disable drawing mode
+        self.current_drawing_shape = None  # Clear current drawing shape
+        if len(self.active_shapes) > 1:  # Can only group multiple shapes
+            group = PersistentGroup(self.active_shapes)
+            self.groups.append(group)
+            for shape in self.active_shapes:
+                self.shapes.remove(shape)  # Remove individual shapes from canvas
+            self.shapes.append(group)  # Add group to canvas
+            self.active_shapes = [group]  # Make the group active
+            self.redraw_all()
+
+    def ungroup_shapes(self):
+        """Set the app to selection/move mode."""
+        self.selected_shape_class = None  # Disable drawing mode
+        self.current_drawing_shape = None  # Clear current drawing shape
+        if len(self.active_shapes) == 1 and isinstance(self.active_shapes[0], PersistentGroup):
+            group = self.active_shapes[0]
+            self.shapes.remove(group)
+            for shape in group.shapes:
+                self.shapes.append(shape)  # Restore individual shapes to canvas
+            self.groups.remove(group)
+            self.active_shapes = group.shapes  # Select individual shapes
+            self.redraw_all()
 
     def save(self):
         file_path = filedialog.asksaveasfilename(defaultextension=".json")
