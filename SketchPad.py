@@ -289,6 +289,11 @@ class DrawingApp:
         delete_button = ttk.Button(self.toolbar, text="Delete", command=self.delete_shapes)
         delete_button.pack(side=tk.LEFT)
 
+        undo_button = ttk.Button(self.toolbar, text="Undo", command=self.undo)
+        undo_button.pack(side=tk.LEFT)
+        redo_button = ttk.Button(self.toolbar, text="Redo", command=self.redo)
+        redo_button.pack(side=tk.LEFT)
+
     # is clicked other buttons while drawing polygon, stop it.
     def stop_drawing_polygon(self):
         self.selected_shape_class = None
