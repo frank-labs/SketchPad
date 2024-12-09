@@ -1,7 +1,7 @@
 import tkinter as tk
 from tkinter import ttk, colorchooser, filedialog
 import json
-
+import math
 
 class Shape:
     def __init__(self, color):
@@ -69,31 +69,53 @@ class RegularShape(Shape):
         return cls(data['start_point'], data['end_point'], data['color'])
 
 
-class Polygon(IrRegularShape):
-    def __init__(self, color):
-        super().__init__(color)
-        self.drawing = True  # To track if the polygon is still being drawn
-        self.canvas_id = None
+class Polygon(IrRegularShape):    
+    def add_point(self, x, y):
+        self.points.append((x, y))
 
     def draw(self, canvas):
         if len(self.points) > 1:
-            if self.canvas_id is not None:
-                canvas.delete(self.canvas_id)
-            self.canvas_id = canvas.create_polygon(*self.flatten_points(), outline=self.color, fill='')
+            canvas.delete("preview")  # Clear any preview
+            #polygons are just a few lines, so we can draw it directly
+            canvas.create_line(self.points, fill="black", tags="polygon", width=2)
 
+    def preview(self, canvas, x, y):
+        if len(self.points) > 0:
+            canvas.delete("preview")  # Clear any previous preview
+            preview_points = self.points + [(x, y)]
+            canvas.create_line(preview_points, fill="gray", dash=(4, 2), tags="preview")
+    #may or may not be used
+    def flatten_points(self, points=None):
+        """Flatten the list of points for drawing."""
+        if points is None:
+            points = self.points
+        return [coord for point in points for coord in point]
+    
     def contains_point(self, x, y):
-        return any(abs(x - px) < 25 and abs(y - py) < 25 for px, py in self.points)
+        """Check if the point (x, y) is inside or on the boundary of the polygon."""
+        # Check if the point is on any of the polygon's edges (lines)
+        for i in range(len(self.points) - 1):
+            x1, y1 = self.points[i]
+            x2, y2 = self.points[i + 1]
+            if Line((x1, y1), (x2, y2), self.color).contains_point(x, y):
+                return True  # Point is on an edge
 
-    def flatten_points(self):
-        return [coord for point in self.points for coord in point]
+        # Check if the point is inside the polygon using ray-casting
+        inside = False
+        n = len(self.points)
+        x1, y1 = self.points[0]
+        for i in range(n + 1):
+            x2, y2 = self.points[i % n]
+            if y > min(y1, y2):
+                if y <= max(y1, y2):
+                    if x <= max(x1, x2):
+                        if y1 != y2:
+                            xinters = (y - y1) * (x2 - x1) / (y2 - y1) + x1
+                        if x1 == x2 or x <= xinters:
+                            inside = not inside
+            x1, y1 = x2, y2
 
-    def close_polygon(self):
-        if len(self.points) > 2:
-            self.drawing = False
-            return True
-        return False
-
-
+        return inside
 class Freehand(IrRegularShape):
     def draw(self, canvas):
         if len(self.points) > 1:
@@ -195,16 +217,19 @@ class DrawingApp:
         self.canvas = tk.Canvas(root, bg="white")
         self.canvas.pack(fill=tk.BOTH, expand=True)
 
+        #config
+        self.tolerance = 10  # Tolerance for snapping to the starting point
+        self.THRESHOLD = 5  # Minimum movement in pixels to detect a drag
+        
+        #state
         self.color = "black"
-        self.selected_shape_class = None  # Stores the shape class (e.g., Line, Rectangle)
+        self.selected_shape_class = None  # Stores the shape class (e.g., Line, Rectangle), if not None, we are in drawing mode
         self.current_drawing_shape = None  # Stores the current shape instance being drawn
         self.shapes = []  # Store all shapes here for persistence
-        # self.active_shape = None  # Holds the currently selected shape
         self.drag_start = None
         self.active_shapes = []  # List of selected shapes (can include multiple shapes)
         self.groups = []  # List of persistent groups
 
-        self.THRESHOLD = 5  # Minimum movement in pixels to detect a drag
         self.is_dragging = False  # Tracks whether the user is dragging shapes
         self.clicked_shape = None
 
@@ -253,8 +278,16 @@ class DrawingApp:
         delete_button = ttk.Button(self.toolbar, text="Delete", command=self.delete_shapes)
         delete_button.pack(side=tk.LEFT)
 
+    # is clicked other buttons while drawing polygon, stop it.
+    def stop_drawing_polygon(self):
+        self.selected_shape_class = None
+        if self.current_drawing_shape and len(self.current_drawing_shape.points) > 1:
+            self.current_drawing_shape.draw(self.canvas)
+        self.current_drawing_shape = None
+
     def delete_shapes(self, event=None):
         """Delete the selected shapes or groups."""
+        self.stop_drawing_polygon()
         if self.active_shapes:
             for shape in self.active_shapes:
                 if isinstance(shape, Group):  # If it's a group, remove all shapes in it
@@ -266,6 +299,7 @@ class DrawingApp:
         self.redraw_all()
             
     def set_select_mode(self):
+        self.stop_drawing_polygon()
         self.selected_shape_class = None  # Disable drawing mode
         self.current_drawing_shape = None  # Clear current drawing shape
         self.redraw_all()
@@ -277,6 +311,8 @@ class DrawingApp:
 
     def set_shape(self, shape_class):
         self.selected_shape_class = shape_class
+        if shape_class != Polygon:
+            self.stop_drawing_polygon()
         self.current_drawing_shape = None  # Exit Drawing Mode if new shape is selected
         self.active_shapes = []  # Clear active shapes when switching to drawing mode
         self.redraw_all()
@@ -313,7 +349,33 @@ class DrawingApp:
                 self.redraw_all()
             self.is_dragging = False  # Reset dragging flag
         else:  # Drawing Mode
-            if issubclass(self.selected_shape_class, IrRegularShape):
+            #Polygon
+            if self.selected_shape_class == Polygon:
+                x, y = event.x, event.y
+                # Initialize a new polygon if the current one is None
+                if self.current_drawing_shape is None:
+                    self.current_drawing_shape = Polygon(color=self.color)
+                    self.shapes.append(self.current_drawing_shape)
+                # First point of the polygon
+                if not self.current_drawing_shape.points:
+                    self.current_drawing_shape.add_point(x, y)
+                else:
+                    # Check if the click is near the initial point
+                    initial_x, initial_y = self.current_drawing_shape.points[0]
+                    if self.distance(x, y, initial_x, initial_y) <= self.tolerance:
+                        # Snap to the initial point to close the polygon
+                        self.current_drawing_shape.add_point(initial_x, initial_y)
+                        self.current_drawing_shape.draw(self.canvas)
+                        self.current_drawing_shape = None  # Mark polygon as finished
+                    else:
+                        # Add a new point
+                        self.current_drawing_shape.add_point(x, y)
+
+                # Draw the polygon after each point addition
+                if self.current_drawing_shape:
+                    self.current_drawing_shape.draw(self.canvas)
+            #Freehand
+            elif issubclass(self.selected_shape_class, IrRegularShape):
                 if self.current_drawing_shape is None:
                     self.current_drawing_shape = self.selected_shape_class(color=self.color)
                     self.shapes.append(self.current_drawing_shape)
@@ -360,7 +422,11 @@ class DrawingApp:
                     self.drag_start = (event.x, event.y)  # Update drag start
                     self.redraw_all()
         elif self.current_drawing_shape:  # Drawing Mode
-            if isinstance(self.current_drawing_shape, RegularShape):
+            if isinstance(self.current_drawing_shape, Polygon):
+                x, y = event.x, event.y
+                self.canvas.delete("preview") 
+                self.current_drawing_shape.preview(self.canvas, x, y)
+            elif isinstance(self.current_drawing_shape, RegularShape):
                 self.current_drawing_shape.end_point = (event.x, event.y)
                 self.redraw_all()
             elif isinstance(self.current_drawing_shape, Freehand):
@@ -368,11 +434,16 @@ class DrawingApp:
                 self.redraw_all()
 
 
+
     def finish_polygon(self, event):
-        if isinstance(self.current_drawing_shape, Polygon):
-            if self.current_drawing_shape and self.current_drawing_shape.close_polygon():
-                self.current_drawing_shape.draw(self.canvas)
-                self.current_drawing_shape = None
+        if not self.selected_shape_class or not self.current_drawing_shape:
+            return
+
+        # right click to finish the open polygon
+        x, y = event.x, event.y
+        self.current_drawing_shape.add_point(x, y)
+        self.current_drawing_shape.draw(self.canvas)
+        self.current_drawing_shape = None  # Start a new polygon on the next click
 
     def end_action(self, event):
         ctrl_pressed = event.state & 0x4  # Check if Ctrl is pressed
@@ -445,6 +516,7 @@ class DrawingApp:
 
     def group_shapes(self):
         """Set the app to selection/move mode."""
+        self.stop_drawing_polygon()
         self.selected_shape_class = None  # Disable drawing mode
         self.current_drawing_shape = None  # Clear current drawing shape
         if len(self.active_shapes) > 1:  # Can only group multiple shapes
@@ -460,6 +532,7 @@ class DrawingApp:
 
     def ungroup_shapes(self):
         """Set the app to selection/move mode."""
+        self.stop_drawing_polygon()
         self.selected_shape_class = None  # Disable drawing mode
         self.current_drawing_shape = None  # Clear current drawing shape
         if len(self.active_shapes) == 1 and isinstance(self.active_shapes[0], Group):
@@ -487,6 +560,9 @@ class DrawingApp:
                 self.shapes = [Shape.from_dict(shape_data) for shape_data in data]
                 self.redraw_all()
 
+    @staticmethod
+    def distance(x1, y1, x2, y2):
+        return math.sqrt((x2 - x1) ** 2 + (y2 - y1) ** 2)
 
 if __name__ == "__main__":
     root = tk.Tk()
