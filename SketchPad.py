@@ -147,7 +147,7 @@ class Rectangle(RegularShape):
                                                  self.end_point[0], self.end_point[1], outline=self.color)
 
     def contains_point(self, x, y):
-        x1, y1, x2, y2 = self.start_point + self.end_point
+        (x1, y1), (x2, y2) = self.start_point , self.end_point
         return min(x1, x2) <= x <= max(x1, x2) and min(y1, y2) <= y <= max(y1, y2)
 
 
@@ -209,7 +209,7 @@ class Group(Shape):
 class DrawingApp:
     def __init__(self, root):
         self.root = root
-        self.root.title("Sketch Pad")
+        self.root.title("Drawing Pad")
 
         self.toolbar = ttk.Frame(root)
         self.toolbar.pack(side=tk.TOP, fill=tk.X)
