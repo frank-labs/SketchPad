@@ -173,6 +173,10 @@ class DrawingApp:
         self.selected_shape_class = None  # Stores the shape class (e.g., Line, Rectangle)
         self.current_drawing_shape = None  # Stores the current shape instance being drawn
         self.shapes = []  # Store all shapes here for persistence
+        self.active_shape = None  # Holds the currently selected shape
+        self.drag_start = None
+
+
 
         self.create_menus()
         self.create_toolbar_buttons()
@@ -205,6 +209,11 @@ class DrawingApp:
         for text, shape_class in shapes:
             button = ttk.Button(self.toolbar, text=text, command=lambda cls=shape_class: self.set_shape(cls))
             button.pack(side=tk.LEFT)
+        select_button = ttk.Button(self.toolbar, text="Select/Move", command=self.set_select_mode)
+        select_button.pack(side=tk.LEFT)
+
+    def set_select_mode(self):
+        self.selected_shape_class = None  # Disable drawing mode
 
     def choose_color(self):
         color = colorchooser.askcolor()[1]
@@ -215,33 +224,45 @@ class DrawingApp:
         self.selected_shape_class = shape_class
 
     def start_action(self, event):
-        if self.selected_shape_class is None:
-            return
-
-        if issubclass(self.selected_shape_class, IrRegularShape):
-            if self.current_drawing_shape is None:
-                self.current_drawing_shape = self.selected_shape_class(color=self.color)
-                self.shapes.append(self.current_drawing_shape)
-            self.current_drawing_shape.points.append((event.x, event.y))
+        if self.selected_shape_class is None:  # Selection/Move Mode
+            for shape in reversed(self.shapes):  # Iterate in reverse to prioritize topmost shapes
+                if shape.contains_point(event.x, event.y):
+                    self.active_shape = shape
+                    self.drag_start = (event.x, event.y)  # Store initial drag position
+                    self.redraw_all()
+                    return
+            self.active_shape = None  # Clicked on empty space, deselect
             self.redraw_all()
-        elif issubclass(self.selected_shape_class, RegularShape):
-            self.current_drawing_shape = self.selected_shape_class(
-                start_point=(event.x, event.y),
-                end_point=(event.x, event.y),
-                color=self.color
-            )
-            self.shapes.append(self.current_drawing_shape)
+        else:  # Drawing Mode
+            if issubclass(self.selected_shape_class, IrRegularShape):
+                if self.current_drawing_shape is None:
+                    self.current_drawing_shape = self.selected_shape_class(color=self.color)
+                    self.shapes.append(self.current_drawing_shape)
+                self.current_drawing_shape.points.append((event.x, event.y))
+                self.redraw_all()
+            elif issubclass(self.selected_shape_class, RegularShape):
+                self.current_drawing_shape = self.selected_shape_class(
+                    start_point=(event.x, event.y),
+                    end_point=(event.x, event.y),
+                    color=self.color
+                )
+                self.shapes.append(self.current_drawing_shape)
 
     def perform_action(self, event):
-        if self.current_drawing_shape is None:
-            return
-
-        if isinstance(self.current_drawing_shape, RegularShape):
-            self.current_drawing_shape.end_point = (event.x, event.y)
-            self.redraw_all()
-        elif isinstance(self.current_drawing_shape, Freehand):
-            self.current_drawing_shape.points.append((event.x, event.y))
-            self.redraw_all()
+        if self.active_shape and self.selected_shape_class is None:  # Move active shape
+            if self.drag_start:  # Ensure drag_start is set
+                dx = event.x - self.drag_start[0]  # Compute movement in x
+                dy = event.y - self.drag_start[1]  # Compute movement in y
+                self.active_shape.move(dx, dy)  # Move the shape
+                self.drag_start = (event.x, event.y)  # Update drag start to current position
+                self.redraw_all()
+        elif self.current_drawing_shape:  # Drawing Mode
+            if isinstance(self.current_drawing_shape, RegularShape):
+                self.current_drawing_shape.end_point = (event.x, event.y)
+                self.redraw_all()
+            elif isinstance(self.current_drawing_shape, Freehand):
+                self.current_drawing_shape.points.append((event.x, event.y))
+                self.redraw_all()
 
     def finish_polygon(self, event):
         if isinstance(self.current_drawing_shape, Polygon):
@@ -250,22 +271,39 @@ class DrawingApp:
                 self.current_drawing_shape = None
 
     def end_action(self, event):
-        if self.current_drawing_shape is None:
+        if self.active_shape and self.selected_shape_class is None:
+            self.drag_start = None  # Reset drag start
             return
+        if self.current_drawing_shape:
+            if isinstance(self.current_drawing_shape, Freehand):
+                self.current_drawing_shape.points.append((event.x, event.y))
+                self.current_drawing_shape.draw(self.canvas)
+                self.current_drawing_shape = None
+            elif isinstance(self.current_drawing_shape, RegularShape):
+                self.current_drawing_shape.end_point = (event.x, event.y)
+                self.current_drawing_shape.draw(self.canvas)
+                self.current_drawing_shape = None
 
-        if isinstance(self.current_drawing_shape, Freehand):
-            self.current_drawing_shape.points.append((event.x, event.y))
-            self.current_drawing_shape.draw(self.canvas)
-            self.current_drawing_shape = None
-        elif isinstance(self.current_drawing_shape, RegularShape):
-            self.current_drawing_shape.end_point = (event.x, event.y)
-            self.current_drawing_shape.draw(self.canvas)
-            self.current_drawing_shape = None
+
 
     def redraw_all(self):
         self.canvas.delete("all")
         for shape in self.shapes:
             shape.draw(self.canvas)
+        if self.active_shape:
+            # Highlight active shape (e.g., with a dashed outline)
+            if isinstance(self.active_shape, RegularShape):
+                self.canvas.create_rectangle(
+                    self.active_shape.start_point[0], self.active_shape.start_point[1],
+                    self.active_shape.end_point[0], self.active_shape.end_point[1],
+                    outline="blue", dash=(4, 2)  # Dashed blue outline for active shape
+                )
+            elif isinstance(self.active_shape, IrRegularShape):
+                self.canvas.create_polygon(
+                    *self.active_shape.flatten_points(),
+                    outline="blue", dash=(4, 2), fill=''  # Dashed blue outline
+                )
+
 
     def save(self):
         file_path = filedialog.asksaveasfilename(defaultextension=".json")
