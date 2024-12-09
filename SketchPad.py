@@ -260,10 +260,6 @@ class DrawingApp:
         file_menu.add_command(label="Save", command=self.save)
         file_menu.add_command(label="Load", command=self.load)
 
-    def log_active_shapes(self,action):
-        """Log the active_shapes list for debugging."""
-        print(f"{action}: {[type(shape).__name__ for shape in self.active_shapes]}")
-
     def create_toolbar_buttons(self):
         color_button = ttk.Button(self.toolbar, text="Color", command=self.choose_color)
         color_button.pack(side=tk.LEFT)
@@ -358,16 +354,12 @@ class DrawingApp:
             else:  # Single selection or drag, we dont know 
                 if self.clicked_shape:
                     if self.clicked_shape not in self.active_shapes:
-                        self.log_active_shapes("2before clicked_shape not in self.active_shapes")
                         self.active_shapes = [self.clicked_shape]  # Make only the clicked shape active
-                        self.log_active_shapes("2after clicked_shape not in self.active_shapes")
                     # else click shape is one of the active shapes, might move multiple/ might select single, see on step 2
                     self.drag_start = (event.x, event.y)
                 # click blanck space
                 else:
-                    self.log_active_shapes("3before clear")
                     self.active_shapes = []  # Deselect all if clicking empty space
-                    self.log_active_shapes("3after clear")
                 self.redraw_all()
             self.is_dragging = False  # Reset dragging flag
         else:  # Drawing Mode
@@ -420,19 +412,14 @@ class DrawingApp:
                 dy = event.y - self.drag_start[1]
                 # is drag, not click, so we move shapes
                 if abs(dx) > self.THRESHOLD or abs(dy) > self.THRESHOLD:  # Check if movement exceeds the threshold
-                    print("it's a drag")
                     self.is_dragging = True  # Set dragging flag
                     if not ctrl_pressed:  # If Ctrl is not pressed, if we move a inactive shape, we move it single, but if we move a active shape, we move multiple
                         if self.clicked_shape not in self.active_shapes:
-                            self.log_active_shapes("4 before click another inactive shape")
                             self.active_shapes = [self.clicked_shape]
-                            self.log_active_shapes("4 after click another inactive shape")
                         #else, we move multiple shapes
                     else:  # If Ctrl is pressed, and the click shape not active, we make it active
                         if self.clicked_shape not in self.active_shapes:
-                            self.log_active_shapes("7 before ctrl add shape")
                             self.active_shapes.append(self.clicked_shape)
-                            self.log_active_shapes("7 after ctrl add  shape")
                     for shape in self.active_shapes:
                         shape.move(dx, dy)
                     self.drag_start = (event.x, event.y)  # Update drag start
@@ -465,26 +452,18 @@ class DrawingApp:
 
     def end_action(self, event):
         ctrl_pressed = event.state & 0x4  # Check if Ctrl is pressed
-        if self.is_dragging:
-            print(f"Drag ended at ({event.x}, {event.y})")
         if self.selected_shape_class is None and not self.is_dragging:  # Move/select mode. and If it's a click, not a drag
             if ctrl_pressed:                 
                 if self.clicked_shape:
                     if self.clicked_shape not in self.active_shapes: 
-                        self.log_active_shapes("1before append")
                         self.active_shapes.append(self.clicked_shape)
-                        self.log_active_shapes("1after append")
                     elif self.clicked_shape in self.active_shapes:  
-                        self.log_active_shapes("5 before remove active shape")
                         self.active_shapes.remove(self.clicked_shape)
-                        self.log_active_shapes("5 after remove active shape")
                 self.redraw_all()
             # no control mode, single click, only select the clicked shape
             else:
                 if self.clicked_shape:
-                    self.log_active_shapes("6 no crtl mode before click another inactive shape")
                     self.active_shapes = [self.clicked_shape]  # Make only the clicked shape active
-                    self.log_active_shapes("6 no crtl mode after click another inactive shape")
                 self.redraw_all()
         elif self.current_drawing_shape:  # Finalize drawing shapes
             if isinstance(self.current_drawing_shape, Freehand):
@@ -544,9 +523,7 @@ class DrawingApp:
             for shape in self.active_shapes:
                 self.shapes.remove(shape)  # Remove individual shapes from canvas
             self.shapes.append(group)  # Add group to canvas
-            self.log_active_shapes("8 before group")
             self.active_shapes = [group]  # Make the group active
-            self.log_active_shapes("8 after group")
             self.redraw_all()
 
     def ungroup_shapes(self):
@@ -561,9 +538,7 @@ class DrawingApp:
             for shape in group.shapes:
                 self.shapes.append(shape)  # Restore individual shapes to canvas
             self.groups.remove(group)
-            self.log_active_shapes("9 before ungroup")
             self.active_shapes = group.shapes  # Select individual shapes
-            self.log_active_shapes("9 after ungroup")
             self.redraw_all()
     def cut_shapes(self, event=None):
         self.save_state()
@@ -571,7 +546,6 @@ class DrawingApp:
         if self.active_shapes:
             # Copy shapes to memory
             self.copied_shapes = cp.deepcopy(self.active_shapes)
-            print(f"Cut {len(self.copied_shapes)} shape(s) to memory")
             
             # Remove the shapes from the canvas
             for shape in self.active_shapes:
@@ -590,9 +564,7 @@ class DrawingApp:
         """Copy the selected shapes."""
         if self.active_shapes:
             self.copied_shapes = cp.deepcopy(self.active_shapes)  # Deep copy to avoid changes to original shapes
-            print(f"Copied {len(self.copied_shapes)} shape(s)")
 
-        
     def paste_shapes(self, event=None):
         self.save_state()
         """Paste the copied shapes at the mouse location."""
@@ -633,7 +605,7 @@ class DrawingApp:
 
             # Redraw canvas
             self.redraw_all()
-            print(f"Pasted {len(new_shapes)} shape(s) at ({mouse_x}, {mouse_y})")
+
     def start_paste_mode(self):
         """Activate paste mode where shapes follow the mouse until placed."""
         if hasattr(self, 'copied_shapes') and self.copied_shapes:
@@ -641,7 +613,6 @@ class DrawingApp:
             self.paste_preview = cp.deepcopy(self.copied_shapes)  # Temporary copy for preview
             self.canvas.bind("<Motion>", self.update_paste_preview)  # Follow mouse
             self.canvas.bind("<Button-1>", self.finalize_paste)  # Place shapes on click
-            print("Paste mode activated")
     def update_paste_preview(self, event):
         """Update the dotted outline position for the paste preview."""
         if self.is_pasting and self.paste_preview:
@@ -686,7 +657,6 @@ class DrawingApp:
             self.canvas.unbind("<Motion>")
             self.canvas.unbind("<Button-1>")
             self.redraw_all()
-            print("Shapes pasted")
     def draw_dotted_outline(self, shapes):
         """Draw shapes with a dotted outline for preview."""
         for shape in shapes:
@@ -716,14 +686,12 @@ class DrawingApp:
             self.redo_stack.append(cp.deepcopy(self.shapes))  # Save current state to redo stack
             self.shapes = self.undo_stack.pop()  # Restore the previous state
             self.redraw_all()
-            print("Undo performed")
     def redo(self, event=None):
         """Redo the last undone action."""
         if self.redo_stack:
             self.undo_stack.append(cp.deepcopy(self.shapes))  # Save current state to undo stack
             self.shapes = self.redo_stack.pop()  # Restore the state from redo stack
             self.redraw_all()
-            print("Redo performed")
 
     def save(self):
         file_path = filedialog.asksaveasfilename(defaultextension=".json")
