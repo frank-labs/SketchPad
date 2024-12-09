@@ -1,7 +1,7 @@
-import tkinter as tk
+import tkinter as tk,json, math
 from tkinter import ttk, colorchooser, filedialog
-import json
-import math
+import copy as cp
+
 
 class Shape:
     def __init__(self, color):
@@ -242,6 +242,9 @@ class DrawingApp:
         self.canvas.bind("<ButtonRelease-1>", self.end_action)
         self.canvas.bind("<Button-3>", self.finish_polygon)
         self.root.bind("<Delete>", self.delete_shapes)  # Bind the "Delete" key to delete shapes
+        self.root.bind("<Control-c>", self.copy_shapes)
+        self.root.bind("<Control-v>", self.paste_shapes)
+
     def create_menus(self):
         menu_bar = tk.Menu(self.root)
         self.root.config(menu=menu_bar)
@@ -547,6 +550,54 @@ class DrawingApp:
             self.active_shapes = group.shapes  # Select individual shapes
             self.log_active_shapes("9 after ungroup")
             self.redraw_all()
+
+    def copy_shapes(self, event=None):
+        """Copy the selected shapes."""
+        if self.active_shapes:
+            self.copied_shapes = cp.deepcopy(self.active_shapes)  # Deep copy to avoid changes to original shapes
+            print(f"Copied {len(self.copied_shapes)} shape(s)")
+
+    def paste_shapes(self, event=None):
+        """Paste the copied shapes at the mouse location."""
+        if hasattr(self, 'copied_shapes') and self.copied_shapes:
+            # Find the reference point (top-left corner of the copied shapes)
+            min_x, min_y = float('inf'), float('inf')
+
+            def get_min_coords(shape):
+                """Recursively calculate the minimum x and y coordinates for a shape or group."""
+                nonlocal min_x, min_y
+                if isinstance(shape, IrRegularShape):
+                    for x, y in shape.points:
+                        min_x = min(min_x, x)
+                        min_y = min(min_y, y)
+                elif isinstance(shape, RegularShape):
+                    min_x = min(min_x, shape.start_point[0], shape.end_point[0])
+                    min_y = min(min_y, shape.start_point[1], shape.end_point[1])
+                elif isinstance(shape, Group):
+                    for sub_shape in shape.shapes:
+                        get_min_coords(sub_shape)
+
+            # Iterate over all copied shapes to calculate the reference point
+            for shape in self.copied_shapes:
+                get_min_coords(shape)
+
+            # Get mouse position
+            mouse_x, mouse_y = self.canvas.winfo_pointerx() - self.canvas.winfo_rootx(), \
+                            self.canvas.winfo_pointery() - self.canvas.winfo_rooty()
+
+            # Calculate offset to align the top-left corner with the mouse position
+            dx, dy = mouse_x - min_x, mouse_y - min_y
+
+            # Create new shapes by moving the copied shapes to the new location
+            new_shapes = cp.deepcopy(self.copied_shapes)
+            for shape in new_shapes:
+                shape.move(dx, dy)
+                self.shapes.append(shape)
+
+            # Redraw canvas
+            self.redraw_all()
+            print(f"Pasted {len(new_shapes)} shape(s) at ({mouse_x}, {mouse_y})")
+
 
     def save(self):
         file_path = filedialog.asksaveasfilename(defaultextension=".json")
