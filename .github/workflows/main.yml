@@ -37,6 +37,7 @@ jobs:
     - name: Publish release
       uses: ncipollo/release-action@v1
       with:
+        tag: "${{ github.sha }}"  # Use the commit SHA as the tag
         artifacts: "dist/SketchPad.exe"
         token: ${{ secrets.GITHUB_TOKEN }}
         name: "Release for commit ${{ github.sha }}"
@@ -45,3 +46,4 @@ jobs:
           - Branch: ${{ github.ref_name }}
           - Built by GitHub Actions.
         prerelease: true  # Optional: mark as a pre-release
+
